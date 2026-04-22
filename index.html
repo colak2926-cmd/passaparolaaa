@@ -418,7 +418,7 @@
     <div class="admin-grid">
       <div class="panel">
         <h2>Soru Ekle / Düzenle</h2>
-        <p class="muted">Her harf için soru ve cevap yaz. Kaydettiğin veriler tarayıcıda saklanır.</p>
+        <p class="muted">Her harf için soru, cevap ve süre yaz. Kaydettiğin veriler tarayıcıda saklanır.</p>
 
         <div class="form-group">
           <label for="questionLetter">Harf</label>
@@ -433,6 +433,11 @@
         <div class="form-group">
           <label for="questionAnswer">Cevap</label>
           <input id="questionAnswer" type="text" placeholder="Cevabı buraya yazın" />
+        </div>
+
+        <div class="form-group">
+          <label for="questionTime">Süre (saniye)</label>
+          <input id="questionTime" type="number" min="1" placeholder="Örn: 10" />
         </div>
 
         <div class="btn-row">
@@ -454,7 +459,7 @@
     <div id="presentationStart" class="panel start-box">
       <h2 style="font-size:42px; margin-bottom:10px;">PASSAPAROLA</h2>
       <p class="muted" style="max-width:760px; margin:0 auto 22px;">
-        Her soruda ayrı süre başlar. Pas dediğinde anında sonraki soruya geçer.
+        Her soru kendi süresiyle başlar. Doğru, yanlış ve pas için farklı sesler çalar.
       </p>
       <button class="btn-primary" id="startGameBtn">Oyunu Başlat</button>
     </div>
@@ -505,7 +510,7 @@
 
             <div class="helper-row">
               <div class="helper-box">Enter tuşu ile cevap verebilirsin.</div>
-              <div class="helper-box">Süre dolarsa soru otomatik pas olur.</div>
+              <div class="helper-box">Son 3 saniyede tik sesi çıkar.</div>
             </div>
 
             <div class="helper-row">
@@ -532,8 +537,7 @@
   </section>
 
   <script>
-    const STORAGE_KEY = 'passaparola_sorular_v4';
-    const QUESTION_TIME = 10;
+    const STORAGE_KEY = 'passaparola_sorular_v5';
 
     const TURKISH_LETTERS = [
       'A','B','C','Ç','D','E','F','G','Ğ','H','I','İ','J','K','L','M',
@@ -543,7 +547,8 @@
     const defaultQuestions = TURKISH_LETTERS.map(letter => ({
       letter,
       clue: '',
-      answer: ''
+      answer: '',
+      time: 10
     }));
 
     let storedQuestions = loadQuestions();
@@ -553,6 +558,7 @@
     const questionLetter = document.getElementById('questionLetter');
     const questionClue = document.getElementById('questionClue');
     const questionAnswer = document.getElementById('questionAnswer');
+    const questionTime = document.getElementById('questionTime');
     const questionList = document.getElementById('questionList');
 
     const showAdminBtn = document.getElementById('showAdminBtn');
@@ -590,7 +596,7 @@
 
     let gameData = [];
     let currentIndex = 0;
-    let timeLeft = QUESTION_TIME;
+    let timeLeft = 10;
     let timerInterval = null;
     let audioContext = null;
 
@@ -632,10 +638,11 @@
       questionLetter.value = item.letter;
       questionClue.value = item.clue;
       questionAnswer.value = item.answer;
+      questionTime.value = item.time || 10;
     }
 
     function escapeHtml(text) {
-      return text
+      return String(text)
         .replace(/&/g,'&amp;')
         .replace(/</g,'&lt;')
         .replace(/>/g,'&gt;')
@@ -658,7 +665,7 @@
               <div class="letter-badge">${item.letter}</div>
               <div>
                 <div><strong>${item.letter} Harfi</strong></div>
-                <div class="small">Sunum modunda kullanılacak</div>
+                <div class="small">Süre: ${item.time || 10} saniye</div>
               </div>
             </div>
             <div class="btn-row">
@@ -676,11 +683,12 @@
       const letter = questionLetter.value;
       const clue = questionClue.value.trim();
       const answer = questionAnswer.value.trim();
+      const time = Math.max(1, parseInt(questionTime.value || '10', 10));
 
       const index = storedQuestions.findIndex(q => q.letter === letter);
       if (index === -1) return;
 
-      storedQuestions[index] = { letter, clue, answer };
+      storedQuestions[index] = { letter, clue, answer, time };
       saveQuestionsToStorage();
       renderQuestionList();
       alert(letter + ' harfi kaydedildi.');
@@ -689,6 +697,7 @@
     function clearForm() {
       questionClue.value = '';
       questionAnswer.value = '';
+      questionTime.value = '10';
     }
 
     function clearAllQuestions() {
@@ -711,14 +720,14 @@
       if (!ok) return;
       const index = storedQuestions.findIndex(q => q.letter === letter);
       if (index === -1) return;
-      storedQuestions[index] = { letter, clue: '', answer: '' };
+      storedQuestions[index] = { letter, clue: '', answer: '', time: 10 };
       saveQuestionsToStorage();
       renderQuestionList();
       if (questionLetter.value === letter) fillFormByLetter(letter);
     };
 
     function normalizeText(text) {
-      return text
+      return String(text)
         .toLocaleLowerCase('tr-TR')
         .replace(/ı/g, 'i')
         .replace(/İ/g, 'i')
@@ -793,6 +802,58 @@
       });
     }
 
+    function ensureAudioContext() {
+      if (!audioContext) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) audioContext = new AudioCtx();
+      }
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+    }
+
+    function playTone(freq, duration, type='sine', volume=0.08, when=0) {
+      if (!audioContext) return;
+      const start = audioContext.currentTime + when;
+      const osc = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(volume, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      osc.connect(gain);
+      gain.connect(audioContext.destination);
+      osc.start(start);
+      osc.stop(start + duration + 0.02);
+    }
+
+    function playTickSound() {
+      playTone(920, 0.12, 'square', 0.07);
+    }
+
+    function playEndSound() {
+      playTone(550, 0.18, 'sawtooth', 0.08, 0);
+      playTone(420, 0.22, 'sawtooth', 0.08, 0.18);
+      playTone(280, 0.28, 'sawtooth', 0.09, 0.38);
+    }
+
+    function playCorrectSound() {
+      playTone(523.25, 0.12, 'triangle', 0.07, 0);
+      playTone(659.25, 0.12, 'triangle', 0.07, 0.12);
+      playTone(783.99, 0.18, 'triangle', 0.08, 0.24);
+    }
+
+    function playWrongSound() {
+      playTone(320, 0.18, 'sawtooth', 0.08, 0);
+      playTone(220, 0.24, 'sawtooth', 0.08, 0.16);
+    }
+
+    function playPassSound() {
+      playTone(430, 0.10, 'square', 0.07, 0);
+      playTone(360, 0.14, 'square', 0.07, 0.10);
+    }
+
     function showCurrentQuestion() {
       updateAlphabetColors();
       document.querySelectorAll('.letter').forEach(el => el.classList.remove('active'));
@@ -814,53 +875,12 @@
       feedback.textContent = '';
       answerInput.focus();
       updateStats();
-      startQuestionTimer();
+      startQuestionTimer(current.time || 10);
     }
 
-    function ensureAudioContext() {
-      if (!audioContext) {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (AudioCtx) audioContext = new AudioCtx();
-      }
-      if (audioContext && audioContext.state === 'suspended') {
-        audioContext.resume();
-      }
-    }
-
-    function playTickSound() {
-      if (!audioContext) return;
-      const osc = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(920, audioContext.currentTime);
-      gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.08, audioContext.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.12);
-      osc.connect(gain);
-      gain.connect(audioContext.destination);
-      osc.start();
-      osc.stop(audioContext.currentTime + 0.13);
-    }
-
-    function playEndSound() {
-      if (!audioContext) return;
-      const osc = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(550, audioContext.currentTime);
-      osc.frequency.linearRampToValueAtTime(220, audioContext.currentTime + 0.6);
-      gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.12, audioContext.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.65);
-      osc.connect(gain);
-      gain.connect(audioContext.destination);
-      osc.start();
-      osc.stop(audioContext.currentTime + 0.66);
-    }
-
-    function startQuestionTimer() {
+    function startQuestionTimer(seconds) {
       clearInterval(timerInterval);
-      timeLeft = QUESTION_TIME;
+      timeLeft = Math.max(1, parseInt(seconds || 10, 10));
       timerEl.textContent = timeLeft;
       timerEl.classList.remove('danger');
 
@@ -909,6 +929,7 @@
       if (!current || current.status !== 'pending') return;
 
       current.status = 'passed';
+      playPassSound();
       updateAlphabetColors();
       updateStats();
       feedback.textContent = fromTimeout
@@ -931,9 +952,11 @@
 
       if (userAnswer === correctAnswer) {
         current.status = 'correct';
+        playCorrectSound();
         feedback.textContent = 'Doğru cevap!';
       } else {
         current.status = 'wrong';
+        playWrongSound();
         feedback.textContent = 'Yanlış cevap. Doğru cevap: ' + current.answer;
       }
 
